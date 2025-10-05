@@ -1,0 +1,149 @@
+{% extends "layout.html" %}
+{% block content %}
+<h1>Шаблоны описаний</h1>
+<p>Используйте шаблоны, чтобы стандартизировать описания и теги для заданий. Поддерживаются переменные Jinja2 и условия.</p>
+<section class="card">
+  <h2>Новый шаблон</h2>
+  <form method="post" action="{{ url_for('templates_create') }}" class="stack-form">
+    <div class="form-row">
+      <label>Название</label>
+      <input name="name" required>
+    </div>
+    <div class="form-row">
+      <label>Slug</label>
+      <input name="slug" placeholder="опционально">
+    </div>
+    <div class="form-row">
+      <label>Тип</label>
+      <input name="type" value="description">
+    </div>
+    <div class="form-row">
+      <label>Платформа</label>
+      <input name="platform" placeholder="YouTube, VK и т.п.">
+    </div>
+    <div class="form-row">
+      <label>UTM-наборы (JSON)</label>
+      <textarea name="utm_sets" rows="2" placeholder='{"vk": {"utm_source": "vk"}}'></textarea>
+    </div>
+    <div class="form-row">
+      <label>Контекст по умолчанию (JSON)</label>
+      <textarea name="default_context" rows="2" placeholder='{"title": "Видео"}'></textarea>
+    </div>
+    <div class="form-row">
+      <label>Теги по умолчанию</label>
+      <input name="default_tags" placeholder="tag1, tag2">
+    </div>
+    <div class="form-row">
+      <label>Тематики</label>
+      <input name="topics" placeholder="education, travel">
+    </div>
+    <div class="form-row">
+      <label>Тело шаблона</label>
+      <textarea name="body" rows="6" required placeholder="Например: {{ title }}"></textarea>
+    </div>
+    <div class="form-row form-row-inline">
+      <label><input type="checkbox" name="is_active" checked> Активен</label>
+      <button type="submit">Создать</button>
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Список шаблонов</h2>
+  {% if templates %}
+    {% for template in templates %}
+    <form method="post" action="{{ url_for('templates_update', template_id=template.id) }}" class="stack-form template-item" data-template-form>
+      <h3>{{ template.name }}</h3>
+      <div class="form-row">
+        <label>Название</label>
+        <input name="name" value="{{ template.name }}" required>
+      </div>
+      <div class="form-row">
+        <label>Slug</label>
+        <input name="slug" value="{{ template.slug or '' }}">
+      </div>
+      <div class="form-row">
+        <label>Тип</label>
+        <input name="type" value="{{ template.type }}">
+      </div>
+      <div class="form-row">
+        <label>Платформа</label>
+        <input name="platform" value="{{ template.platform or '' }}">
+      </div>
+      <div class="form-row">
+        <label>UTM-наборы (JSON)</label>
+        <textarea name="utm_sets" rows="2">{{ template.utm_sets | tojson(indent=2) if template.utm_sets else '' }}</textarea>
+      </div>
+      <div class="form-row">
+        <label>Контекст по умолчанию (JSON)</label>
+        <textarea name="default_context" rows="2">{{ template.default_context | tojson(indent=2) if template.default_context else '' }}</textarea>
+      </div>
+      <div class="form-row">
+        <label>Теги по умолчанию</label>
+        <input name="default_tags" value="{{ template.default_tags | join(', ') }}">
+      </div>
+      <div class="form-row">
+        <label>Тематики</label>
+        <input name="topics" value="{{ template.topics | join(', ') }}">
+      </div>
+      <div class="form-row">
+        <label>Тело шаблона</label>
+        <textarea name="body" rows="6" required>{{ template.body }}</textarea>
+      </div>
+      <div class="form-row form-row-inline">
+        <label><input type="checkbox" name="is_active" value="1" {% if template.is_active %}checked{% endif %}> Активен</label>
+        <button type="button" class="button-secondary" data-template-preview-button data-template-id="{{ template.id }}" data-context-field="textarea[name='default_context']" data-preview-target="#template-preview-{{ template.id }}">Предпросмотр</button>
+        <button type="submit">Сохранить</button>
+        <button type="submit" name="action" value="delete" class="danger">Удалить</button>
+      </div>
+      <pre class="template-preview" id="template-preview-{{ template.id }}" aria-live="polite"></pre>
+    </form>
+    {% endfor %}
+  {% else %}
+    <p>Шаблонов пока нет.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Библиотека тегов</h2>
+  <form method="post" action="{{ url_for('tags_create') }}" class="form-row-inline">
+    <input name="tag" placeholder="Новый тег" required>
+    <input name="category" placeholder="Категория">
+    <label><input type="checkbox" name="is_active" checked> Активен</label>
+    <button type="submit">Добавить тег</button>
+  </form>
+  {% if tags %}
+  <table class="queue-table">
+    <thead>
+      <tr>
+        <th>Тег</th>
+        <th>Категория</th>
+        <th>Статус</th>
+        <th>Действия</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for tag in tags %}
+      <tr>
+        <td>{{ tag.tag }}</td>
+        <td>{{ tag.category or '—' }}</td>
+        <td>{{ 'Активен' if tag.is_active else 'Выключен' }}</td>
+        <td>
+          <form method="post" action="{{ url_for('tags_update', tag_id=tag.id) }}" class="inline-form">
+            <input type="hidden" name="tag" value="{{ tag.tag }}">
+            <input type="hidden" name="category" value="{{ tag.category or '' }}">
+            <input type="hidden" name="is_active" value="{{ 1 if tag.is_active else 0 }}">
+            <button type="submit" name="action" value="toggle" class="button-secondary">{% if tag.is_active %}Отключить{% else %}Включить{% endif %}</button>
+            <button type="submit" name="action" value="delete" class="danger">Удалить</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p>Теги не заданы.</p>
+  {% endif %}
+</section>
+<script src="{{ url_for('static', filename='templates.js') }}" defer></script>
+{% endblock %}

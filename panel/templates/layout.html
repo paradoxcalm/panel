@@ -45,6 +45,8 @@
     <nav class="sidebar-nav">
       {% if has_role(ROLE_EDITOR) or has_role(ROLE_OWNER) %}
       <a href="{{ url_for('index') }}">Загрузка</a>
+      <a href="{{ url_for('templates_view') }}">Шаблоны</a>
+      <a href="{{ url_for('links_view') }}">Ссылки</a>
       {% endif %}
       {% if current_user.is_authenticated %}
       <a href="{{ url_for('queue_view') }}">Дашборд</a>

@@ -165,6 +165,66 @@ class Job(Base):
     schedule_slot = relationship("ScheduleSlot", back_populates="job", uselist=False)
 
 
+class Template(Base):
+    __tablename__ = "templates"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), nullable=False, unique=True)
+    slug = Column(String(255), nullable=True, unique=True)
+    type = Column(String(64), nullable=False, default="description")
+    body = Column(Text, nullable=False)
+    platform = Column(String(64), nullable=True)
+    utm_sets = Column(JSONType, nullable=False, default=dict)
+    default_context = Column(JSONType, nullable=False, default=dict)
+    default_tags = Column(JSONType, nullable=False, default=list)
+    topics = Column(JSONType, nullable=False, default=list)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), default=dt.datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=dt.datetime.utcnow,
+        onupdate=dt.datetime.utcnow,
+        nullable=False,
+    )
+
+
+class Link(Base):
+    __tablename__ = "links"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), nullable=False)
+    slug = Column(String(128), nullable=False, unique=True)
+    url = Column(String(1024), nullable=False)
+    description = Column(Text, nullable=True)
+    platform = Column(String(64), nullable=True)
+    utm_params = Column(JSONType, nullable=False, default=dict)
+    metadata = Column(JSONType, nullable=False, default=dict)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), default=dt.datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=dt.datetime.utcnow,
+        onupdate=dt.datetime.utcnow,
+        nullable=False,
+    )
+
+
+class TagLibrary(Base):
+    __tablename__ = "tag_library"
+
+    id = Column(Integer, primary_key=True)
+    tag = Column(String(255), nullable=False, unique=True)
+    category = Column(String(255), nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), default=dt.datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=dt.datetime.utcnow,
+        onupdate=dt.datetime.utcnow,
+        nullable=False,
+    )
+
+
 class ScheduleSlot(Base):
     __tablename__ = "schedule_slots"
 

@@ -211,6 +211,10 @@ fieldset {
   gap: 12px;
 }
 
+.tag-fieldset {
+  flex-direction: column;
+}
+
 button {
   background: #2563eb;
   color: #fff;
@@ -225,6 +229,14 @@ button:hover {
   transform: translateY(-1px);
 }
 
+.button-secondary {
+  background: #475569;
+}
+
+.danger {
+  background: #dc2626;
+}
+
 .form-actions {
   margin-top: 12px;
 }
@@ -232,6 +244,12 @@ button:hover {
 .note {
   font-size: 0.85rem;
   color: #64748b;
+}
+
+.hint {
+  font-size: 0.85rem;
+  color: #64748b;
+  margin-top: 6px;
 }
 
 .queue-table {
@@ -301,4 +319,65 @@ button:hover {
 .meta {
   font-size: 0.85rem;
   color: #64748b;
+}
+
+.stack-form {
+  display: grid;
+  gap: 12px;
+}
+
+.form-row-inline {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.inline-form {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.stack-inline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.template-preview {
+  background: #0f172a;
+  color: #f8fafc;
+  padding: 12px;
+  border-radius: 8px;
+  min-height: 60px;
+  white-space: pre-wrap;
+  margin-top: 8px;
+}
+
+.tag-group {
+  display: grid;
+  gap: 8px;
+}
+
+.tag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: #e2e8f0;
+  font-size: 0.9rem;
+}
+
+.chip input {
+  accent-color: #2563eb;
+}
+
+.queue-table tr.is-inactive {
+  opacity: 0.6;
 }

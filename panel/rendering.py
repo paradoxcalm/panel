@@ -14,10 +14,14 @@ from .models import Link, Template
 _SPIN_PATTERN = re.compile(r"\{([^{}]+)\}")
 
 
+_SKIP = object()
+
+
 @dataclass
 class RenderResult:
     text: str
     context: Dict[str, Any]
+    serializable_context: Dict[str, Any]
 
 
 def _apply_spintax(value: str) -> str:
@@ -48,6 +52,19 @@ class LinkAccessor:
 
     def __init__(self, links: Mapping[str, Mapping[str, Any]]):
         self._links = links
+
+    def as_dict(self) -> Dict[str, Dict[str, Any]]:
+        """Вернуть словарь с данными ссылок без объектов Python."""
+
+        result: Dict[str, Dict[str, Any]] = {}
+        for name, data in self._links.items():
+            url = data.get("url") or ""
+            utm = data.get("utm") or {}
+            result[name] = {
+                "url": str(url),
+                "utm": {str(k): str(v) for k, v in utm.items()},
+            }
+        return result
 
     def __getattr__(self, name: str) -> str:
         data = self._links.get(name)
@@ -123,6 +140,42 @@ class TemplateRenderer:
             ctx["utm"] = lambda name, _accessor=accessor: self._utm_helper(name, _accessor)
         return ctx
 
+    def make_serializable_context(self, context: Mapping[str, Any]) -> Dict[str, Any]:
+        """Преобразовать контекст к JSON-совместимому виду."""
+
+        def convert(value: Any) -> Any:
+            if isinstance(value, LinkAccessor):
+                return value.as_dict()
+            if isinstance(value, Mapping):
+                converted: Dict[str, Any] = {}
+                for key, item in value.items():
+                    result = convert(item)
+                    if result is _SKIP:
+                        continue
+                    converted[str(key)] = result
+                return converted
+            if isinstance(value, (list, tuple, set)):
+                items = []
+                for item in value:
+                    result = convert(item)
+                    if result is _SKIP:
+                        continue
+                    items.append(result)
+                return items
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                return value
+            if callable(value):
+                return _SKIP
+            return str(value)
+
+        result: Dict[str, Any] = {}
+        for key, value in context.items():
+            converted = convert(value)
+            if converted is _SKIP:
+                continue
+            result[str(key)] = converted
+        return result
+
     def render(
         self,
         template: Template,
@@ -132,11 +185,16 @@ class TemplateRenderer:
         apply_spintax: bool = True,
     ) -> RenderResult:
         ctx = self.build_context(template, context=context, links=links)
+        serializable_ctx = self.make_serializable_context(ctx)
         jinja_template = self.env.from_string(template.body)
         rendered = jinja_template.render(ctx)
         if apply_spintax:
             rendered = _apply_spintax(rendered)
-        return RenderResult(text=rendered.strip(), context=ctx)
+        return RenderResult(
+            text=rendered.strip(),
+            context=ctx,
+            serializable_context=serializable_ctx,
+        )
 
 
 def parse_context(raw: str) -> Dict[str, Any]:

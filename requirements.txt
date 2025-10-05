@@ -1,0 +1,10 @@
+Flask>=2.3
+Flask-Login>=0.6
+SQLAlchemy>=1.4
+waitress>=2.1
+cryptography>=41.0
+google-api-python-client>=2.86
+google-auth>=2.20
+google-auth-oauthlib>=1.0
+celery>=5.3
+redis>=4.5

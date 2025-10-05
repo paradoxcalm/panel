@@ -1,6 +1,8 @@
 # uploader.py
 import json
 from contextlib import contextmanager
+import json
+from contextlib import contextmanager
 from typing import Optional
 
 from google.oauth2.credentials import Credentials
@@ -9,9 +11,9 @@ from googleapiclient.http import MediaFileUpload
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 
-from database import SessionLocal
-from models import Account
-from token_service import decrypt, encrypt
+from .database import SessionLocal
+from .models import Account
+from .token_service import decrypt, encrypt
 
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",

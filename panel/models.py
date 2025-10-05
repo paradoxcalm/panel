@@ -19,7 +19,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from database import Base
+from .database import Base
 
 
 JSONType = JSON().with_variant(JSONB(astext_type=Text()), "postgresql")
@@ -154,15 +154,25 @@ class Job(Base):
     tags = Column(JSONType, nullable=False, default=list)
     category_id = Column(String(32), nullable=False, default="22")
     publish_at = Column(DateTime(timezone=True), nullable=True)
-    status = Column(String(32), nullable=False, default="pending")
+    status = Column(String(32), nullable=False, default="queued")
     created_at = Column(DateTime(timezone=True), default=dt.datetime.utcnow, nullable=False)
     started_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
     error_message = Column(Text, nullable=True)
     youtube_video_id = Column(String(128), nullable=True)
+    template_id = Column(Integer, ForeignKey("templates.id", ondelete="SET NULL"), nullable=True)
+    template_context = Column(JSONType, nullable=False, default=dict)
+    celery_task_id = Column(String(255), nullable=True)
 
     channel = relationship("Channel", back_populates="jobs")
     schedule_slot = relationship("ScheduleSlot", back_populates="job", uselist=False)
+    template = relationship("Template")
+    logs = relationship(
+        "JobLog",
+        back_populates="job",
+        cascade="all, delete-orphan",
+        order_by="JobLog.created_at",
+    )
 
 
 class Template(Base):
@@ -237,3 +247,17 @@ class ScheduleSlot(Base):
 
     channel = relationship("Channel", back_populates="schedule_slots")
     job = relationship("Job", back_populates="schedule_slot")
+
+
+class JobLog(Base):
+    __tablename__ = "job_logs"
+
+    id = Column(Integer, primary_key=True)
+    job_id = Column(Integer, ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False)
+    event = Column(String(255), nullable=False)
+    level = Column(String(32), nullable=False, default="info")
+    message = Column(Text, nullable=True)
+    payload = Column(JSONType, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), default=dt.datetime.utcnow, nullable=False)
+
+    job = relationship("Job", back_populates="logs")

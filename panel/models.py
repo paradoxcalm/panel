@@ -1,12 +1,108 @@
 import datetime as dt
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, LargeBinary, String, Text, Time, JSON
+from typing import Optional
+
+from flask_login import UserMixin
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    String,
+    Table,
+    Text,
+    Time,
+    JSON,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from database import Base
 
 
 JSONType = JSON().with_variant(JSONB(astext_type=Text()), "postgresql")
+
+
+user_roles_table = Table(
+    "user_roles",
+    Base.metadata,
+    Column("user_id", Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True),
+    Column("role_id", Integer, ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True),
+)
+
+
+class Role(Base):
+    __tablename__ = "roles"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String(64), nullable=False, unique=True)
+    description = Column(Text, nullable=True)
+
+    users = relationship("User", secondary=user_roles_table, back_populates="roles")
+
+
+class User(Base, UserMixin):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True)
+    username = Column(String(255), nullable=False, unique=True)
+    display_name = Column(String(255), nullable=True)
+    password_hash = Column(String(255), nullable=True)
+    sso_token_hash = Column(String(255), nullable=True)
+    is_enabled = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), default=dt.datetime.utcnow, nullable=False)
+    updated_at = Column(
+        DateTime(timezone=True),
+        default=dt.datetime.utcnow,
+        onupdate=dt.datetime.utcnow,
+        nullable=False,
+    )
+
+    roles = relationship(
+        "Role",
+        secondary=user_roles_table,
+        back_populates="users",
+        lazy="joined",
+    )
+
+    @property  # type: ignore[override]
+    def is_active(self) -> bool:
+        return bool(self.is_enabled)
+
+    def set_password(self, password: Optional[str]) -> None:
+        """Установить хэш пароля для пользователя."""
+        if password:
+            self.password_hash = generate_password_hash(password)
+        else:
+            self.password_hash = None
+
+    def check_password(self, password: Optional[str]) -> bool:
+        if not password or not self.password_hash:
+            return False
+        return check_password_hash(self.password_hash, password)
+
+    def set_sso_token(self, token: Optional[str]) -> None:
+        """Сохранить хэш SSO-токена."""
+        if token:
+            self.sso_token_hash = generate_password_hash(token)
+        else:
+            self.sso_token_hash = None
+
+    def check_sso_token(self, token: Optional[str]) -> bool:
+        if not token or not self.sso_token_hash:
+            return False
+        return check_password_hash(self.sso_token_hash, token)
+
+    def has_role(self, role_name: str) -> bool:
+        return any(role.name == role_name for role in self.roles)
+
+    def has_any_role(self, *role_names: str) -> bool:
+        if not role_names:
+            return True
+        target = set(role_names)
+        return any(role.name in target for role in self.roles)
 
 
 class Account(Base):

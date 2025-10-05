@@ -1,0 +1,83 @@
+{% extends "layout.html" %}
+{% block content %}
+<h1>Управление пользователями</h1>
+<section class="card">
+  <h2>Создать пользователя</h2>
+  <form method="post" action="{{ url_for('users_create') }}" class="user-create-form">
+    <div class="form-row">
+      <label for="new_username">Имя пользователя</label>
+      <input type="text" id="new_username" name="username" required>
+    </div>
+    <div class="form-row">
+      <label for="new_display_name">Отображаемое имя</label>
+      <input type="text" id="new_display_name" name="display_name">
+    </div>
+    <div class="form-row">
+      <label for="new_password">Пароль</label>
+      <input type="password" id="new_password" name="password" required>
+    </div>
+    <div class="form-row">
+      <label for="new_sso">SSO-токен (опционально)</label>
+      <input type="text" id="new_sso" name="sso_token">
+    </div>
+    <fieldset class="form-row">
+      <legend>Роли</legend>
+      {% for role in roles %}
+      <label><input type="checkbox" name="roles" value="{{ role.name }}" {% if role.name == ROLE_VIEWER %}checked{% endif %}> {{ role.name|capitalize }}</label>
+      {% endfor %}
+    </fieldset>
+    <div class="form-actions">
+      <button type="submit">Создать</button>
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Существующие пользователи</h2>
+  {% if users %}
+  <div class="user-list">
+    {% for user in users %}
+    {% set user_role_names = user.roles | map(attribute='name') | list %}
+    <div class="user-card">
+      <form method="post" action="{{ url_for('users_update', user_id=user.id) }}">
+        <h3>{{ user.display_name or user.username }}</h3>
+        <p class="muted">Логин: {{ user.username }} | Статус: {{ 'Активен' if user.is_active else 'Отключен' }}</p>
+        <div class="form-row">
+          <label>Отображаемое имя</label>
+          <input type="text" name="display_name" value="{{ user.display_name or '' }}">
+        </div>
+        <div class="form-row">
+          <label>Новый пароль</label>
+          <input type="password" name="password" placeholder="Оставьте пустым без изменений">
+        </div>
+        <div class="form-row">
+          <label>Новый SSO-токен</label>
+          <input type="text" name="sso_token" placeholder="Оставьте пустым без изменений">
+        </div>
+        <div class="form-row">
+          <label><input type="checkbox" name="clear_sso" value="1"> Очистить сохранённый SSO-токен</label>
+        </div>
+        <div class="form-row">
+          <label><input type="checkbox" name="is_enabled" value="on" {% if user.is_active %}checked{% endif %}> Активен</label>
+        </div>
+        <fieldset class="form-row">
+          <legend>Роли</legend>
+          {% for role in roles %}
+          <label><input type="checkbox" name="roles" value="{{ role.name }}" {% if role.name in user_role_names %}checked{% endif %}> {{ role.name|capitalize }}</label>
+          {% endfor %}
+        </fieldset>
+        <div class="form-actions">
+          <button type="submit">Сохранить</button>
+        </div>
+      </form>
+      <form method="post" action="{{ url_for('users_delete', user_id=user.id) }}" class="danger-form" onsubmit="return confirm('Удалить пользователя {{ user.username }}?');">
+        <button type="submit">Удалить</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p>Пользователи не найдены.</p>
+  {% endif %}
+</section>
+{% endblock %}

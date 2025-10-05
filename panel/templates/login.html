@@ -1,0 +1,20 @@
+{% extends "layout.html" %}
+{% block content %}
+<section class="card auth-card">
+  <h1>Вход</h1>
+  <form method="post" action="{{ url_for('login') }}">
+    <div class="form-row">
+      <label for="username">Имя пользователя</label>
+      <input type="text" id="username" name="username" required autofocus>
+    </div>
+    <div class="form-row">
+      <label for="password">Пароль</label>
+      <input type="password" id="password" name="password" required>
+    </div>
+    <div class="form-actions">
+      <button type="submit">Войти</button>
+    </div>
+  </form>
+  <p class="note">Первичный пользователь: <strong>admin / admin</strong>. Измените пароль после входа.</p>
+</section>
+{% endblock %}

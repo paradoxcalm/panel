@@ -6,27 +6,56 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <div class="topbar-title"><a href="{{ url_for('index') }}">YT Panel</a></div>
+    <div class="topbar-user">
+      {% if current_user.is_authenticated %}
+      <div class="user-info">
+        <strong>{{ current_user.display_name or current_user.username }}</strong>
+        <small>Роли: {{ current_user.roles | map(attribute='name') | join(', ') }}</small>
+      </div>
+      <form method="post" action="{{ url_for('logout') }}">
+        <button type="submit">Выйти</button>
+      </form>
+      {% else %}
+      <a href="{{ url_for('login') }}">Войти</a>
+      {% endif %}
+    </div>
+  </div>
+</header>
 <div class="app-shell">
+  {% if current_user.is_authenticated %}
   <aside class="sidebar">
     <h2>Аккаунты</h2>
     <ul class="account-list">
-      {% for acc in nav_accounts %}
-      <li class="account-item{% if acc.id == active_account_id %} is-active{% endif %}">
-        <form method="post" action="{{ url_for('switch_account', account_id=acc.id) }}">
-          <button type="submit">{{ acc.name }}</button>
-        </form>
-        <small>{{ acc.timezone }}</small>
-      </li>
+      {% if nav_accounts %}
+        {% for acc in nav_accounts %}
+        <li class="account-item{% if acc.id == active_account_id %} is-active{% endif %}">
+          <form method="post" action="{{ url_for('switch_account', account_id=acc.id) }}">
+            <button type="submit">{{ acc.name }}</button>
+          </form>
+          <small>{{ acc.timezone }}</small>
+        </li>
+        {% endfor %}
       {% else %}
       <li class="account-empty">Нет аккаунтов</li>
-      {% endfor %}
+      {% endif %}
     </ul>
     <nav class="sidebar-nav">
+      {% if has_role(ROLE_EDITOR) or has_role(ROLE_OWNER) %}
       <a href="{{ url_for('index') }}">Загрузка</a>
-      <a href="{{ url_for('queue_view') }}">Очередь</a>
+      {% endif %}
+      {% if current_user.is_authenticated %}
+      <a href="{{ url_for('queue_view') }}">Дашборд</a>
+      {% endif %}
+      {% if has_role(ROLE_OWNER) %}
       <a href="{{ url_for('accounts_view') }}">Настройки аккаунтов</a>
+      <a href="{{ url_for('users_list') }}">Пользователи</a>
+      {% endif %}
     </nav>
   </aside>
+  {% endif %}
   <main class="content">
     {% with messages = get_flashed_messages() %}
       {% if messages %}

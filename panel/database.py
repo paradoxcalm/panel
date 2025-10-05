@@ -2,7 +2,7 @@ import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), 'data')
+DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
 def _default_database_url():
@@ -18,5 +18,5 @@ Base = declarative_base()
 
 
 def init_db():
-    import models  # noqa: F401 - ensure models imported
+    from . import models  # noqa: F401 - ensure models imported
     Base.metadata.create_all(bind=engine)

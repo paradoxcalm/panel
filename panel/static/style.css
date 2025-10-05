@@ -150,6 +150,115 @@ body {
   box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
 }
 
+.calendar-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.calendar-hint {
+  font-size: 0.9rem;
+  color: #475569;
+}
+
+.calendar-board {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+.calendar-column {
+  background: #f8fafc;
+  border-radius: 10px;
+  display: flex;
+  flex-direction: column;
+  min-height: 320px;
+}
+
+.calendar-column-header {
+  padding: 12px;
+  font-weight: 600;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.calendar-column-body {
+  flex: 1;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 240px;
+}
+
+.job-card {
+  background: #fff;
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08);
+  cursor: grab;
+  display: grid;
+  gap: 8px;
+}
+
+.job-card h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.job-meta {
+  margin: 0;
+  font-size: 0.85rem;
+  white-space: pre-line;
+  color: #475569;
+}
+
+.job-error {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #dc2626;
+}
+
+.job-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.job-actions button {
+  flex: 1;
+  font-size: 0.85rem;
+  padding: 6px 8px;
+}
+
+.job-log-viewer {
+  background: #0f172a;
+  color: #f8fafc;
+  padding: 16px;
+  border-radius: 8px;
+  min-height: 120px;
+  overflow: auto;
+}
+
+.job-card.status-queued {
+  border-left: 4px solid #38bdf8;
+}
+
+.job-card.status-scheduled {
+  border-left: 4px solid #14b8a6;
+}
+
+.job-card.status-processing {
+  border-left: 4px solid #f97316;
+}
+
+.job-card.status-completed {
+  border-left: 4px solid #22c55e;
+}
+
+.job-card.status-failed {
+  border-left: 4px solid #ef4444;
+}
+
 .auth-card {
   max-width: 420px;
   margin: 40px auto;

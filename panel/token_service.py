@@ -1,10 +1,11 @@
 import os
+import os
 from functools import lru_cache
 from typing import Optional
 
 from cryptography.fernet import Fernet
 
-from database import DATA_DIR
+from .database import DATA_DIR
 
 FERNET_KEY_PATH = os.path.join(DATA_DIR, "fernet.key")
 

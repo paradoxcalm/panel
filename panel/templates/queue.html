@@ -4,37 +4,17 @@
 {% if not account %}
   <p>Создайте аккаунт, чтобы просматривать очередь.</p>
 {% else %}
-  {% if queue %}
-  <table class="queue-table">
-    <thead>
-      <tr>
-        <th>Название</th>
-        <th>Канал</th>
-        <th>Публикация</th>
-        <th>Статус</th>
-        <th>Видео</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for item in queue %}
-      <tr>
-        <td>{{ item.title }}</td>
-        <td>{{ item.channel.name }}</td>
-        <td>
-          {% if item.publish_at %}
-            {{ (item.publish_at|in_tz(item.channel.timezone)).strftime('%Y-%m-%d %H:%M') }}
-          {% else %}
-            Немедленно
-          {% endif %}
-        </td>
-        <td>{{ item.status }}</td>
-        <td><small>{{ item.video_path }}</small></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-  <p>Очередь пуста.</p>
-  {% endif %}
+  <div class="card">
+    <div class="calendar-controls">
+      <button type="button" class="button-secondary" data-action="refresh">Обновить</button>
+      <span class="calendar-hint">Перетащите карточку задания на нужный день и время.</span>
+    </div>
+    <div id="queue-board" class="calendar-board" aria-live="polite"></div>
+  </div>
+  <div class="card">
+    <h2>Статусы и ошибки</h2>
+    <pre id="job-log-viewer" class="job-log-viewer" aria-live="polite">Выберите задание, чтобы посмотреть историю событий.</pre>
+  </div>
+  <script src="{{ url_for('static', filename='queue.js') }}" defer></script>
 {% endif %}
 {% endblock %}

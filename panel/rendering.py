@@ -9,7 +9,7 @@ from typing import Any, Dict, Iterable, Mapping, MutableMapping, Optional
 
 from jinja2 import Environment, StrictUndefined
 
-from models import Link, Template
+from .models import Link, Template
 
 _SPIN_PATTERN = re.compile(r"\{([^{}]+)\}")
 

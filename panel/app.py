@@ -1,7 +1,6 @@
 import datetime as dt
 import json
 import os
-import random
 from contextlib import contextmanager
 from functools import wraps
 from typing import Any, Dict, Iterable, List, Optional
@@ -25,12 +24,13 @@ from flask_login import (
     login_user,
     logout_user,
 )
-from sqlalchemy import case
 from sqlalchemy.orm import joinedload
 from waitress import serve
 
-from database import DATA_DIR, SessionLocal, init_db
-from models import (
+from .constants import ACTIVE_JOB_STATUSES
+from .database import DATA_DIR, SessionLocal, init_db
+from .job_service import add_job_log, job_log_to_dict, job_to_dict
+from .models import (
     Account,
     Channel,
     Job,
@@ -41,8 +41,15 @@ from models import (
     Template,
     User,
 )
-from uploader import auth_service, rfc3339, upload_one
-from rendering import TemplateRenderer, parse_context
+from .rendering import TemplateRenderer, parse_context
+from .scheduling import (
+    SchedulerSettings,
+    apply_channel_limits,
+    find_slot_for_job,
+    get_effective_timezone,
+    load_channel_state,
+)
+from .tasks import schedule_pending_jobs, trigger_ready_jobs
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "change-me")
@@ -103,7 +110,6 @@ def bootstrap_auth() -> None:
 
 bootstrap_auth()
 
-ACTIVE_JOB_STATUSES = ("pending", "processing")
 MAX_TAGS = 15
 
 template_renderer = TemplateRenderer()
@@ -375,97 +381,6 @@ def ensure_active_account(session) -> Optional[Account]:
     return account
 
 
-def get_effective_timezone(channel: Channel) -> str:
-    if channel.timezone:
-        return channel.timezone
-    if channel.account and channel.account.timezone:
-        return channel.account.timezone
-    return "UTC"
-
-
-def get_effective_daily_cap(channel: Channel) -> Optional[int]:
-    if channel.daily_cap:
-        return channel.daily_cap
-    if channel.account and channel.account.daily_cap:
-        return channel.account.daily_cap
-    return None
-
-
-def get_effective_quiet_hours(channel: Channel) -> tuple[Optional[dt.time], Optional[dt.time]]:
-    start = channel.quiet_hours_start or (channel.account.quiet_hours_start if channel.account else None)
-    end = channel.quiet_hours_end or (channel.account.quiet_hours_end if channel.account else None)
-    return start, end
-
-
-def move_out_of_quiet_hours(local_dt: dt.datetime, start: Optional[dt.time], end: Optional[dt.time]) -> dt.datetime:
-    if not start or not end or start == end:
-        return local_dt
-    while True:
-        current_time = local_dt.time()
-        if start < end:
-            if start <= current_time < end:
-                local_dt = local_dt.replace(
-                    hour=end.hour,
-                    minute=end.minute,
-                    second=0,
-                    microsecond=0,
-                )
-                continue
-            break
-        else:
-            if current_time >= start:
-                next_date = local_dt.date() + dt.timedelta(days=1)
-                local_dt = dt.datetime.combine(
-                    next_date,
-                    end,
-                    tzinfo=local_dt.tzinfo,
-                )
-                continue
-            if current_time < end:
-                local_dt = dt.datetime.combine(
-                    local_dt.date(),
-                    end,
-                    tzinfo=local_dt.tzinfo,
-                )
-                continue
-            break
-    return local_dt
-
-
-def count_jobs_for_day(session, channel: Channel, local_date: dt.date) -> int:
-    tz = ZoneInfo(get_effective_timezone(channel))
-    start_local = dt.datetime.combine(local_date, dt.time.min, tzinfo=tz)
-    end_local = start_local + dt.timedelta(days=1)
-    start_utc = start_local.astimezone(dt.timezone.utc)
-    end_utc = end_local.astimezone(dt.timezone.utc)
-    return (
-        session.query(Job)
-        .filter(
-            Job.channel_id == channel.id,
-            Job.publish_at.isnot(None),
-            Job.publish_at >= start_utc,
-            Job.publish_at < end_utc,
-            Job.status.in_(ACTIVE_JOB_STATUSES),
-        )
-        .count()
-    )
-
-
-def apply_channel_limits(session, channel: Channel, candidate_utc: dt.datetime) -> dt.datetime:
-    tz_name = get_effective_timezone(channel)
-    tz = ZoneInfo(tz_name)
-    local_dt = candidate_utc.astimezone(tz)
-    start, end = get_effective_quiet_hours(channel)
-    local_dt = move_out_of_quiet_hours(local_dt, start, end)
-    cap = get_effective_daily_cap(channel)
-    if cap and cap > 0:
-        while count_jobs_for_day(session, channel, local_dt.date()) >= cap:
-            next_date = local_dt.date() + dt.timedelta(days=1)
-            local_dt = dt.datetime.combine(next_date, local_dt.time(), tzinfo=tz)
-            local_dt = move_out_of_quiet_hours(local_dt, start, end)
-    return local_dt.astimezone(dt.timezone.utc)
-
-
 def parse_time(value: str) -> Optional[dt.time]:
     if not value:
         return None
@@ -663,11 +578,9 @@ def upload():
                 local_dt = local_dt.replace(tzinfo=tz)
                 publish_at_utc = local_dt.astimezone(dt.timezone.utc)
         elif mode == "random":
-            min_h = float(request.form.get("min_h", 1))
-            max_h = float(request.form.get("max_h", 3))
-            start_dt = dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=10)
-            delta = random.uniform(min_h, max_h)
-            publish_at_utc = start_dt + dt.timedelta(hours=delta)
+            publish_at_utc = None
+        else:
+            publish_at_utc = dt.datetime.now(dt.timezone.utc)
 
         if publish_at_utc:
             publish_at_utc = apply_channel_limits(session, channel, publish_at_utc)
@@ -718,6 +631,9 @@ def upload():
             tags = ["youtube", "shorts"]
         elif candidate_total > MAX_TAGS and len(tags) == MAX_TAGS:
             flash(f"Список тегов ограничен {MAX_TAGS} значениями")
+        status = "queued"
+        if publish_at_utc:
+            status = "scheduled"
         job = Job(
             channel_id=channel.id,
             title=title,
@@ -727,22 +643,41 @@ def upload():
             publish_at=publish_at_utc,
             video_path=video_path,
             thumb_path=thumb_path,
-            status="pending",
+            status=status,
+            template_id=template.id,
+            template_context=render_result.context,
         )
+        job.channel = channel
         session.add(job)
         session.flush()
-        slot_time = publish_at_utc or dt.datetime.now(dt.timezone.utc)
-        slot = ScheduleSlot(
-            channel_id=channel.id,
-            job_id=job.id,
-            scheduled_for=slot_time,
-            status="reserved",
+        add_job_log(
+            session,
+            job,
+            "job.created",
+            payload={
+                "mode": mode or "now",
+                "status": status,
+                "publish_at": publish_at_utc.isoformat() if publish_at_utc else None,
+            },
         )
-        session.add(slot)
+        if publish_at_utc:
+            slot = ScheduleSlot(
+                channel_id=channel.id,
+                job_id=job.id,
+                scheduled_for=publish_at_utc,
+                status="reserved",
+            )
+            session.add(slot)
         session.commit()
         flash("Добавлено в очередь")
     finally:
         session.close()
+
+    if publish_at_utc:
+        if publish_at_utc <= dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=5):
+            trigger_ready_jobs.delay()
+    else:
+        schedule_pending_jobs.delay()
     return redirect(url_for("index"))
 
 
@@ -1074,72 +1009,295 @@ def queue_view():
 @app.route("/start", methods=["POST"])
 @roles_required(ROLE_EDITOR, ROLE_OWNER)
 def start():
+    schedule_pending_jobs.delay()
+    trigger_ready_jobs.delay()
+    flash("Запущены фоновые задания на планирование и загрузку")
+    return redirect(url_for("index"))
+
+
+@app.route("/api/jobs", methods=["GET"])
+@roles_required(ROLE_VIEWER, ROLE_EDITOR, ROLE_OWNER)
+def api_jobs_list():
     session = SessionLocal()
     try:
         account = ensure_active_account(session)
-        if not account:
-            flash("Создайте аккаунт и канал перед загрузкой")
-            return redirect(url_for("index"))
-        order_expression = case((Job.publish_at.is_(None), 0), else_=1)
-        job_ids = [
-            job.id
-            for job in (
-                session.query(Job)
-                .join(Channel)
-                .filter(Channel.account_id == account.id, Job.status == "pending")
-                .order_by(order_expression, Job.publish_at, Job.created_at)
-                .all()
-            )
-        ]
+        query = (
+            session.query(Job)
+            .options(joinedload(Job.channel), joinedload(Job.schedule_slot))
+            .order_by(Job.created_at.desc())
+        )
+        if account:
+            query = query.join(Channel).filter(Channel.account_id == account.id)
+        jobs = query.all()
+        data = [job_to_dict(job) for job in jobs]
+        return jsonify({"jobs": data})
     finally:
         session.close()
 
-    if not job_ids:
-        flash("Очередь пуста")
-        return redirect(url_for("index"))
 
-    yt = auth_service(account.id)
-
-    errors = 0
+@app.route("/api/jobs", methods=["POST"])
+@roles_required(ROLE_EDITOR, ROLE_OWNER)
+def api_jobs_create():
+    payload = request.get_json(silent=True) or {}
+    channel_id = payload.get("channel_id")
+    if not channel_id:
+        return jsonify({"error": "channel_id обязателен"}), 400
     session = SessionLocal()
     try:
-        for job_id in job_ids:
-            job = session.get(Job, job_id, options=(joinedload(Job.schedule_slot), joinedload(Job.channel)))
-            if not job:
-                continue
-            job.status = "processing"
-            job.started_at = dt.datetime.now(dt.timezone.utc)
-            session.flush()
+        channel = session.get(Channel, int(channel_id), options=(joinedload(Channel.account),))
+        if not channel:
+            return jsonify({"error": "Канал не найден"}), 404
+        template_id = payload.get("template_id")
+        template = None
+        if template_id:
+            template = session.get(Template, int(template_id))
+            if not template:
+                return jsonify({"error": "Шаблон не найден"}), 404
+        publish_at_utc: Optional[dt.datetime] = None
+        publish_raw = payload.get("publish_at")
+        if publish_raw:
             try:
-                publish_at_iso = rfc3339(job.publish_at) if job.publish_at else None
-                video_id = upload_one(
-                    yt,
-                    video_path=job.video_path,
-                    title=job.title,
-                    description=job.description,
-                    tags=job.tags,
-                    category_id=job.category_id,
-                    publish_at_iso=publish_at_iso,
-                    thumb_path=job.thumb_path,
+                parsed = dt.datetime.fromisoformat(publish_raw)
+            except ValueError:
+                return jsonify({"error": "Некорректный формат publish_at"}), 400
+            tz = ZoneInfo(get_effective_timezone(channel))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=tz)
+            else:
+                parsed = parsed.astimezone(tz)
+            publish_at_utc = parsed.astimezone(dt.timezone.utc)
+        title = (payload.get("title") or "").strip()
+        if not title:
+            return jsonify({"error": "title обязателен"}), 400
+        video_path = payload.get("video_path")
+        if not video_path:
+            return jsonify({"error": "video_path обязателен"}), 400
+        description = payload.get("description") or ""
+        thumb_path = payload.get("thumb_path")
+        tags_value = payload.get("tags") or []
+        if isinstance(tags_value, str):
+            tags = parse_tag_list(tags_value)
+        else:
+            tags = [str(tag) for tag in tags_value]
+        template_context = payload.get("template_context") or {}
+        if isinstance(template_context, str):
+            try:
+                template_context = json.loads(template_context)
+            except json.JSONDecodeError:
+                template_context = {}
+        category_id = str(payload.get("category_id") or "22")
+        status = "scheduled" if publish_at_utc else "queued"
+        if publish_at_utc:
+            publish_at_utc = apply_channel_limits(session, channel, publish_at_utc)
+        job = Job(
+            channel_id=channel.id,
+            title=title,
+            description=description,
+            tags=tags,
+            category_id=category_id,
+            publish_at=publish_at_utc,
+            video_path=video_path,
+            thumb_path=thumb_path,
+            status=status,
+            template_id=template.id if template else None,
+            template_context=template_context if isinstance(template_context, dict) else {},
+        )
+        job.channel = channel
+        session.add(job)
+        session.flush()
+        add_job_log(
+            session,
+            job,
+            "job.created.api",
+            payload={
+                "status": status,
+                "publish_at": publish_at_utc.isoformat() if publish_at_utc else None,
+            },
+        )
+        if publish_at_utc:
+            session.add(
+                ScheduleSlot(
+                    channel_id=channel.id,
+                    job_id=job.id,
+                    scheduled_for=publish_at_utc,
+                    status="reserved",
                 )
-                job.status = "completed"
-                job.youtube_video_id = video_id
-                job.completed_at = dt.datetime.now(dt.timezone.utc)
-                if job.schedule_slot:
-                    job.schedule_slot.status = "completed"
-            except Exception as exc:  # pragma: no cover - runtime safety
-                job.status = "failed"
-                job.error_message = str(exc)
-                if job.schedule_slot:
-                    job.schedule_slot.status = "failed"
-                errors += 1
-            session.flush()
+            )
+        session.commit()
+        job_dict = job_to_dict(job)
+    finally:
+        session.close()
+
+    if publish_at_utc:
+        trigger_ready_jobs.delay()
+    else:
+        schedule_pending_jobs.delay()
+    return jsonify({"job": job_dict}), 201
+
+
+@app.route("/api/jobs/<int:job_id>/retry", methods=["POST"])
+@roles_required(ROLE_EDITOR, ROLE_OWNER)
+def api_job_retry(job_id: int):
+    session = SessionLocal()
+    try:
+        job = session.get(
+            Job,
+            job_id,
+            options=(joinedload(Job.schedule_slot), joinedload(Job.channel)),
+        )
+        if not job:
+            return jsonify({"error": "Задание не найдено"}), 404
+        if job.schedule_slot:
+            session.delete(job.schedule_slot)
+        job.publish_at = None
+        job.status = "queued"
+        job.started_at = None
+        job.completed_at = None
+        job.error_message = None
+        job.youtube_video_id = None
+        job.celery_task_id = None
+        add_job_log(session, job, "job.retry")
+        session.flush()
+        job_dict = job_to_dict(job)
         session.commit()
     finally:
         session.close()
+    schedule_pending_jobs.delay()
+    return jsonify({"job": job_dict})
 
-    flash(f"Готово. Ошибок: {errors}")
-    return redirect(url_for("index"))
+
+@app.route("/api/jobs/<int:job_id>/logs", methods=["GET"])
+@roles_required(ROLE_VIEWER, ROLE_EDITOR, ROLE_OWNER)
+def api_job_logs(job_id: int):
+    session = SessionLocal()
+    try:
+        job = session.get(Job, job_id, options=(joinedload(Job.logs),))
+        if not job:
+            return jsonify({"error": "Задание не найдено"}), 404
+        data = [job_log_to_dict(entry) for entry in job.logs]
+        return jsonify({"logs": data})
+    finally:
+        session.close()
+
+
+@app.route("/api/schedule", methods=["POST"])
+@roles_required(ROLE_EDITOR, ROLE_OWNER)
+def api_schedule_update():
+    payload = request.get_json(silent=True) or {}
+    job_id = payload.get("job_id")
+    if not job_id:
+        return jsonify({"error": "job_id обязателен"}), 400
+    scheduled_raw = payload.get("scheduled_for")
+    session = SessionLocal()
+    try:
+        job = session.get(
+            Job,
+            int(job_id),
+            options=(
+                joinedload(Job.channel).joinedload("account"),
+                joinedload(Job.schedule_slot),
+            ),
+        )
+        if not job:
+            return jsonify({"error": "Задание не найдено"}), 404
+        channel = job.channel
+        if not channel:
+            return jsonify({"error": "Канал недоступен"}), 400
+        tz = ZoneInfo(get_effective_timezone(channel))
+        job_dict: Dict[str, Any]
+        if not scheduled_raw:
+            if job.schedule_slot:
+                session.delete(job.schedule_slot)
+            job.publish_at = None
+            job.status = "queued"
+            job.started_at = None
+            job.completed_at = None
+            job.celery_task_id = None
+            add_job_log(session, job, "scheduler.manual-reset")
+            session.flush()
+            job_dict = job_to_dict(job)
+            session.commit()
+            next_action = "queue"
+        else:
+            parsed: Optional[dt.datetime]
+            if isinstance(scheduled_raw, dict):
+                date_part = scheduled_raw.get("date")
+                time_part = scheduled_raw.get("time")
+                if not date_part or not time_part:
+                    return jsonify({"error": "Нужно указать дату и время"}), 400
+                try:
+                    parsed = dt.datetime.fromisoformat(f"{date_part}T{time_part}")
+                except ValueError:
+                    return jsonify({"error": "Некорректный формат даты"}), 400
+            else:
+                try:
+                    parsed = dt.datetime.fromisoformat(str(scheduled_raw))
+                except ValueError:
+                    return jsonify({"error": "Некорректный формат даты"}), 400
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=tz)
+            else:
+                parsed = parsed.astimezone(tz)
+            desired_utc = parsed.astimezone(dt.timezone.utc)
+            state = load_channel_state(session, channel, exclude_job_id=job.id)
+            settings = SchedulerSettings.from_env()
+            slot_time = find_slot_for_job(
+                session,
+                job,
+                desired_utc=desired_utc,
+                occupied=state.occupied,
+                extra_counts=state.extra_counts,
+                settings=settings,
+            )
+            if slot_time is None:
+                return jsonify({"error": "Не удалось подобрать слот"}), 409
+            job.publish_at = slot_time
+            job.status = "scheduled"
+            job.started_at = None
+            job.completed_at = None
+            job.celery_task_id = None
+            if job.schedule_slot:
+                job.schedule_slot.scheduled_for = slot_time
+                job.schedule_slot.status = "reserved"
+            else:
+                session.add(
+                    ScheduleSlot(
+                        channel_id=channel.id,
+                        job_id=job.id,
+                        scheduled_for=slot_time,
+                        status="reserved",
+                    )
+                )
+            add_job_log(
+                session,
+                job,
+                "scheduler.manual-set",
+                payload={"scheduled_for": slot_time.isoformat()},
+            )
+            state.register(channel, slot_time)
+            session.flush()
+            job_dict = job_to_dict(job)
+            session.commit()
+            next_action = "trigger"
+    finally:
+        session.close()
+
+    if scheduled_raw and next_action == "trigger":
+        publish_iso = job_dict.get("publish_at") if isinstance(job_dict, dict) else None
+        if publish_iso:
+            try:
+                publish_dt = dt.datetime.fromisoformat(str(publish_iso))
+            except ValueError:
+                publish_dt = None
+        else:
+            publish_dt = None
+        if publish_dt and publish_dt <= dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=5):
+            trigger_ready_jobs.delay()
+        else:
+            schedule_pending_jobs.delay()
+    else:
+        schedule_pending_jobs.delay()
+    return jsonify({"job": job_dict})
 
 
 @app.route("/switch-account/<int:account_id>", methods=["POST"])

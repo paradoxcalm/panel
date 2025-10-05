@@ -3,7 +3,7 @@ import json
 import os
 from contextlib import contextmanager
 from functools import wraps
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional
 from zoneinfo import ZoneInfo
 
 from flask import (
@@ -645,7 +645,7 @@ def upload():
             thumb_path=thumb_path,
             status=status,
             template_id=template.id,
-            template_context=render_result.context,
+            template_context=render_result.serializable_context,
         )
         job.channel = channel
         session.add(job)
@@ -1085,6 +1085,8 @@ def api_jobs_create():
                 template_context = json.loads(template_context)
             except json.JSONDecodeError:
                 template_context = {}
+        if isinstance(template_context, Mapping):
+            template_context = template_renderer.make_serializable_context(template_context)
         category_id = str(payload.get("category_id") or "22")
         status = "scheduled" if publish_at_utc else "queued"
         if publish_at_utc:

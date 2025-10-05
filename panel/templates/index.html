@@ -30,17 +30,46 @@
       <input name="title" placeholder="по умолчанию = имя файла">
     </div>
     <div class="form-row">
-      <label>Description</label>
-      <textarea name="description" rows="4"></textarea>
+      <label for="template_id">Шаблон описания</label>
+      <select name="template_id" id="template_id" required data-template-select>
+        <option value="" disabled selected>Выберите шаблон</option>
+        {% for template in templates %}
+        <option value="{{ template.id }}" data-default-context='{{ template.default_context | tojson if template.default_context else '' }}'>{{ template.name }}</option>
+        {% endfor %}
+      </select>
+      {% if not templates %}
+      <p class="hint">Создайте шаблон в разделе «Шаблоны».</p>
+      {% endif %}
     </div>
     <div class="form-row">
-      <label>Telegram ссылка</label>
-      <input name="tg" placeholder="https://t.me/your_channel">
+      <label for="template_context">Контекст (JSON)</label>
+      <textarea name="template_context" id="template_context" rows="4" placeholder='{"title": "Видео"}' data-template-context></textarea>
+      <button type="button" class="button-secondary" data-template-preview-button data-template-select="#template_id" data-context-field="#template_context" data-preview-target="#template-preview">Предпросмотр</button>
+      <pre id="template-preview" class="template-preview" aria-live="polite"></pre>
     </div>
-    <div class="form-row">
-      <label>Tags (через запятую)</label>
-      <input name="tags" value="youtube,shorts">
-    </div>
+    <fieldset class="form-row tag-fieldset">
+      <legend>Дополнительные теги</legend>
+      <p class="hint">Теги шаблона объединяются с выбранными значениями. Лимит — {{ MAX_TAGS }} тегов.</p>
+      {% if quick_tags %}
+        {% for category, group in quick_tags | groupby('category') %}
+        {% set items = group.list %}
+        <div class="tag-group">
+          <strong>{{ category or 'Без категории' }}</strong>
+          <div class="tag-chips">
+            {% for tag in items %}
+            <label class="chip">
+              <input type="checkbox" name="tag_ids" value="{{ tag.id }}">
+              <span>{{ tag.tag }}</span>
+            </label>
+            {% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+      {% else %}
+        <p class="hint">Добавьте быстрые теги в разделе «Шаблоны».</p>
+      {% endif %}
+      <input name="custom_tags" placeholder="Дополнительные теги через запятую">
+    </fieldset>
     <div class="form-row">
       <label>CategoryId</label>
       <input name="categoryId" value="22">
@@ -98,4 +127,5 @@
     <button type="submit">Старт загрузки (всё из очереди)</button>
   </form>
 </section>
+<script src="{{ url_for('static', filename='templates.js') }}" defer></script>
 {% endblock %}

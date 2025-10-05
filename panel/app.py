@@ -1,15 +1,17 @@
 import datetime as dt
+import json
 import os
 import random
 from contextlib import contextmanager
 from functools import wraps
-from typing import Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 from zoneinfo import ZoneInfo
 
 from flask import (
     Flask,
     abort,
     flash,
+    jsonify,
     redirect,
     render_template,
     request,
@@ -28,8 +30,19 @@ from sqlalchemy.orm import joinedload
 from waitress import serve
 
 from database import DATA_DIR, SessionLocal, init_db
-from models import Account, Channel, Job, Role, ScheduleSlot, User
+from models import (
+    Account,
+    Channel,
+    Job,
+    Link,
+    Role,
+    ScheduleSlot,
+    TagLibrary,
+    Template,
+    User,
+)
 from uploader import auth_service, rfc3339, upload_one
+from rendering import TemplateRenderer, parse_context
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET", "change-me")
@@ -91,6 +104,9 @@ def bootstrap_auth() -> None:
 bootstrap_auth()
 
 ACTIVE_JOB_STATUSES = ("pending", "processing")
+MAX_TAGS = 15
+
+template_renderer = TemplateRenderer()
 
 
 @contextmanager
@@ -459,6 +475,54 @@ def parse_time(value: str) -> Optional[dt.time]:
         return None
 
 
+def parse_json_mapping(raw: str, field_name: str) -> Dict[str, Any]:
+    raw = (raw or "").strip()
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Поле '{field_name}': некорректный JSON ({exc})") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"Поле '{field_name}' должно быть JSON-объектом")
+    return data
+
+
+def parse_tag_list(raw: str) -> List[str]:
+    if not raw:
+        return []
+    result: List[str] = []
+    seen = set()
+    for part in raw.replace("\n", ",").split(","):
+        tag = part.strip()
+        if not tag:
+            continue
+        low = tag.lower()
+        if low in seen:
+            continue
+        seen.add(low)
+        result.append(tag)
+    return result
+
+
+def merge_tags(*tag_groups: Iterable[str]) -> List[str]:
+    seen = set()
+    merged: List[str] = []
+    for group in tag_groups:
+        for tag in group:
+            norm = tag.strip()
+            if not norm:
+                continue
+            low = norm.lower()
+            if low in seen:
+                continue
+            if len(merged) >= MAX_TAGS:
+                return merged
+            seen.add(low)
+            merged.append(norm)
+    return merged
+
+
 @app.template_filter("in_tz")
 def localize(value: Optional[dt.datetime], tz_name: Optional[str]):
     if value is None or not tz_name:
@@ -506,6 +570,8 @@ def index():
         account = ensure_active_account(session)
         channels: Iterable[Channel] = []
         queue: Iterable[Job] = []
+        templates: List[Template] = []
+        quick_tags: List[TagLibrary] = []
         if account:
             channels = (
                 session.query(Channel)
@@ -521,7 +587,27 @@ def index():
                 .order_by(Job.created_at)
                 .all()
             )
-        return render_template("index.html", account=account, channels=channels, queue=queue)
+            templates = (
+                session.query(Template)
+                .filter(Template.is_active.is_(True), Template.type == "description")
+                .order_by(Template.name)
+                .all()
+            )
+            quick_tags = (
+                session.query(TagLibrary)
+                .filter(TagLibrary.is_active.is_(True))
+                .order_by(TagLibrary.category, TagLibrary.tag)
+                .all()
+            )
+        return render_template(
+            "index.html",
+            account=account,
+            channels=channels,
+            queue=queue,
+            templates=templates,
+            quick_tags=quick_tags,
+            MAX_TAGS=MAX_TAGS,
+        )
     finally:
         session.close()
 
@@ -543,11 +629,22 @@ def upload():
             return redirect(url_for("index"))
         thumb_file = request.files.get("thumb")
         title = request.form.get("title") or os.path.splitext(video_file.filename)[0]
-        desc = request.form.get("description") or ""
-        tg = request.form.get("tg") or ""
-        tags = [t.strip() for t in (request.form.get("tags") or "").split(",") if t.strip()]
         category_id = request.form.get("categoryId") or "22"
         mode = request.form.get("mode")
+        template_id = request.form.get("template_id", type=int)
+        if not template_id:
+            flash("Выберите шаблон описания")
+            return redirect(url_for("index"))
+        template = session.get(Template, template_id)
+        if not template or not template.is_active:
+            flash("Шаблон недоступен")
+            return redirect(url_for("index"))
+        context_raw = request.form.get("template_context") or ""
+        try:
+            context_overrides = parse_context(context_raw)
+        except ValueError as exc:
+            flash(str(exc))
+            return redirect(url_for("index"))
 
         video_path = os.path.join(UPLOAD_DIR, video_file.filename)
         video_file.save(video_path)
@@ -575,7 +672,52 @@ def upload():
         if publish_at_utc:
             publish_at_utc = apply_channel_limits(session, channel, publish_at_utc)
 
-        description = (desc + (f"\nПодпишись на Telegram: {tg}" if tg else "")).strip()
+        links = session.query(Link).filter(Link.is_active.is_(True)).all()
+        try:
+            render_result = template_renderer.render(
+                template,
+                context=context_overrides,
+                links=links,
+                apply_spintax=True,
+            )
+            description = render_result.text
+        except Exception as exc:
+            app.logger.exception("Не удалось отрендерить шаблон %s", template_id)
+            flash(f"Ошибка рендера шаблона: {exc}")
+            return redirect(url_for("index"))
+
+        template_tags = template.default_tags or []
+        context_tags: List[str] = []
+        ctx_value = render_result.context.get("tags")
+        if isinstance(ctx_value, list):
+            context_tags = [str(item) for item in ctx_value if str(item).strip()]
+
+        selected_tag_ids = [
+            int(tag_id)
+            for tag_id in (request.form.getlist("tag_ids") or [])
+            if tag_id.isdigit()
+        ]
+        quick_tag_values: List[str] = []
+        if selected_tag_ids:
+            quick_tag_values = [
+                tag.tag
+                for tag in session.query(TagLibrary)
+                .filter(TagLibrary.id.in_(selected_tag_ids))
+                .filter(TagLibrary.is_active.is_(True))
+                .all()
+            ]
+        custom_tags = parse_tag_list(request.form.get("custom_tags") or "")
+        candidate_total = (
+            len(template_tags)
+            + len(context_tags)
+            + len(quick_tag_values)
+            + len(custom_tags)
+        )
+        tags = merge_tags(template_tags, context_tags, quick_tag_values, custom_tags)
+        if not tags:
+            tags = ["youtube", "shorts"]
+        elif candidate_total > MAX_TAGS and len(tags) == MAX_TAGS:
+            flash(f"Список тегов ограничен {MAX_TAGS} значениями")
         job = Job(
             channel_id=channel.id,
             title=title,
@@ -602,6 +744,310 @@ def upload():
     finally:
         session.close()
     return redirect(url_for("index"))
+
+
+@app.route("/templates", methods=["GET"])
+@roles_required(ROLE_EDITOR, ROLE_OWNER)
+def templates_view():
+    session = SessionLocal()
+    try:
+        templates = session.query(Template).order_by(Template.name).all()
+        tags = session.query(TagLibrary).order_by(TagLibrary.category, TagLibrary.tag).all()
+        return render_template("templates_manage.html", templates=templates, tags=tags)
+    finally:
+        session.close()
+
+
+def _fill_template_from_form(template: Template, form) -> None:
+    template.name = (form.get("name") or "").strip()
+    template.slug = (form.get("slug") or "").strip() or None
+    template.type = (form.get("type") or "description").strip() or "description"
+    template.body = (form.get("body") or "").strip()
+    template.platform = (form.get("platform") or "").strip() or None
+    template.is_active = bool(form.get("is_active"))
+    template.utm_sets = parse_json_mapping(form.get("utm_sets"), "UTM-наборы")
+    template.default_context = parse_json_mapping(
+        form.get("default_context"), "Контекст по умолчанию"
+    )
+    template.default_tags = parse_tag_list(form.get("default_tags"))
+    template.topics = parse_tag_list(form.get("topics"))
+    if not template.name:
+        raise ValueError("Название шаблона обязательно")
+    if not template.body:
+        raise ValueError("Тело шаблона не может быть пустым")
+
+
+@app.route("/templates", methods=["POST"])
+@roles_required(ROLE_EDITOR, ROLE_OWNER)
+def templates_create():
+    session = SessionLocal()
+    try:
+        template = Template()
+        try:
+            _fill_template_from_form(template, request.form)
+        except ValueError as exc:
+            flash(str(exc))
+            return redirect(url_for("templates_view"))
+        session.add(template)
+        session.commit()
+        flash("Шаблон создан")
+    except Exception as exc:
+        session.rollback()
+        flash(f"Не удалось создать шаблон: {exc}")
+    finally:
+        session.close()
+    return redirect(url_for("templates_view"))
+
+
+@app.route("/templates/<int:template_id>", methods=["POST"])
+@roles_required(ROLE_EDITOR, ROLE_OWNER)
+def templates_update(template_id: int):
+    action = request.form.get("action") or "update"
+    session = SessionLocal()
+    try:
+        template = session.get(Template, template_id)
+        if not template:
+            flash("Шаблон не найден")
+            return redirect(url_for("templates_view"))
+        if action == "delete":
+            session.delete(template)
+            try:
+                session.commit()
+            except Exception as exc:
+                session.rollback()
+                flash(f"Не удалось удалить шаблон: {exc}")
+                return redirect(url_for("templates_view"))
+            flash("Шаблон удалён")
+            return redirect(url_for("templates_view"))
+        try:
+            _fill_template_from_form(template, request.form)
+        except ValueError as exc:
+            flash(str(exc))
+            return redirect(url_for("templates_view"))
+        try:
+            session.commit()
+        except Exception as exc:
+            session.rollback()
+            flash(f"Не удалось обновить шаблон: {exc}")
+            return redirect(url_for("templates_view"))
+        flash("Шаблон обновлён")
+    finally:
+        session.close()
+    return redirect(url_for("templates_view"))
+
+
+@app.route("/templates/render", methods=["POST"])
+@roles_required(ROLE_EDITOR, ROLE_OWNER)
+def templates_render():
+    payload = request.get_json(silent=True) or {}
+    template_id = payload.get("template_id")
+    if not template_id:
+        return jsonify({"ok": False, "error": "template_id обязателен"}), 400
+    try:
+        template_id = int(template_id)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Некорректный template_id"}), 400
+    apply_spintax = bool(payload.get("apply_spintax"))
+    context_payload = payload.get("context")
+    context_data: Dict[str, Any]
+    try:
+        if isinstance(context_payload, str):
+            context_data = parse_context(context_payload)
+        elif isinstance(context_payload, dict):
+            context_data = context_payload
+        else:
+            context_data = {}
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+    session = SessionLocal()
+    try:
+        template = session.get(Template, template_id)
+        if not template:
+            return jsonify({"ok": False, "error": "Шаблон не найден"}), 404
+        links = session.query(Link).filter(Link.is_active.is_(True)).all()
+        try:
+            result = template_renderer.render(
+                template,
+                context=context_data,
+                links=links,
+                apply_spintax=apply_spintax,
+            )
+        except Exception as exc:
+            app.logger.exception("Ошибка рендера шаблона %s", template_id)
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        return jsonify({"ok": True, "rendered": result.text})
+    finally:
+        session.close()
+
+
+@app.route("/links", methods=["GET"])
+@roles_required(ROLE_EDITOR, ROLE_OWNER)
+def links_view():
+    session = SessionLocal()
+    try:
+        links = session.query(Link).order_by(Link.name).all()
+        return render_template("links_manage.html", links=links)
+    finally:
+        session.close()
+
+
+def _fill_link_from_form(link: Link, form) -> None:
+    link.name = (form.get("name") or "").strip()
+    link.slug = (form.get("slug") or "").strip()
+    link.url = (form.get("url") or "").strip()
+    link.description = (form.get("description") or "").strip() or None
+    link.platform = (form.get("platform") or "").strip() or None
+    link.is_active = bool(form.get("is_active"))
+    link.utm_params = parse_json_mapping(form.get("utm_params"), "UTM")
+    link.metadata = parse_json_mapping(form.get("metadata"), "Доп. данные")
+    if not link.name:
+        raise ValueError("Название ссылки обязательно")
+    if not link.slug:
+        raise ValueError("Slug обязателен")
+    if not link.url:
+        raise ValueError("URL обязателен")
+
+
+@app.route("/links", methods=["POST"])
+@roles_required(ROLE_EDITOR, ROLE_OWNER)
+def links_create():
+    session = SessionLocal()
+    try:
+        link = Link()
+        try:
+            _fill_link_from_form(link, request.form)
+        except ValueError as exc:
+            flash(str(exc))
+            return redirect(url_for("links_view"))
+        session.add(link)
+        session.commit()
+        flash("Ссылка добавлена")
+    except Exception as exc:
+        session.rollback()
+        flash(f"Не удалось сохранить ссылку: {exc}")
+    finally:
+        session.close()
+    return redirect(url_for("links_view"))
+
+
+@app.route("/links/<int:link_id>", methods=["POST"])
+@roles_required(ROLE_EDITOR, ROLE_OWNER)
+def links_update(link_id: int):
+    action = request.form.get("action") or "update"
+    session = SessionLocal()
+    try:
+        link = session.get(Link, link_id)
+        if not link:
+            flash("Ссылка не найдена")
+            return redirect(url_for("links_view"))
+        if action == "delete":
+            session.delete(link)
+            try:
+                session.commit()
+            except Exception as exc:
+                session.rollback()
+                flash(f"Не удалось удалить ссылку: {exc}")
+                return redirect(url_for("links_view"))
+            flash("Ссылка удалена")
+            return redirect(url_for("links_view"))
+        if action == "toggle":
+            link.is_active = not link.is_active
+            try:
+                session.commit()
+            except Exception as exc:
+                session.rollback()
+                flash(f"Не удалось изменить статус: {exc}")
+                return redirect(url_for("links_view"))
+            flash("Статус ссылки обновлён")
+            return redirect(url_for("links_view"))
+        try:
+            _fill_link_from_form(link, request.form)
+        except ValueError as exc:
+            flash(str(exc))
+            return redirect(url_for("links_view"))
+        try:
+            session.commit()
+        except Exception as exc:
+            session.rollback()
+            flash(f"Не удалось обновить ссылку: {exc}")
+            return redirect(url_for("links_view"))
+        flash("Ссылка обновлена")
+    finally:
+        session.close()
+    return redirect(url_for("links_view"))
+
+
+@app.route("/tags", methods=["POST"])
+@roles_required(ROLE_EDITOR, ROLE_OWNER)
+def tags_create():
+    session = SessionLocal()
+    try:
+        tag = TagLibrary(
+            tag=(request.form.get("tag") or "").strip(),
+            category=(request.form.get("category") or "").strip() or None,
+            is_active=bool(request.form.get("is_active")),
+        )
+        if not tag.tag:
+            flash("Тег не может быть пустым")
+            return redirect(url_for("templates_view"))
+        session.add(tag)
+        session.commit()
+        flash("Тег добавлен")
+    except Exception as exc:
+        session.rollback()
+        flash(f"Не удалось добавить тег: {exc}")
+    finally:
+        session.close()
+    return redirect(url_for("templates_view"))
+
+
+@app.route("/tags/<int:tag_id>", methods=["POST"])
+@roles_required(ROLE_EDITOR, ROLE_OWNER)
+def tags_update(tag_id: int):
+    action = request.form.get("action") or "update"
+    session = SessionLocal()
+    try:
+        tag = session.get(TagLibrary, tag_id)
+        if not tag:
+            flash("Тег не найден")
+            return redirect(url_for("templates_view"))
+        if action == "delete":
+            session.delete(tag)
+            try:
+                session.commit()
+            except Exception as exc:
+                session.rollback()
+                flash(f"Не удалось удалить тег: {exc}")
+                return redirect(url_for("templates_view"))
+            flash("Тег удалён")
+            return redirect(url_for("templates_view"))
+        if action == "toggle":
+            tag.is_active = not tag.is_active
+            try:
+                session.commit()
+            except Exception as exc:
+                session.rollback()
+                flash(f"Не удалось изменить статус тега: {exc}")
+                return redirect(url_for("templates_view"))
+            flash("Статус тега обновлён")
+            return redirect(url_for("templates_view"))
+        tag.tag = (request.form.get("tag") or "").strip()
+        tag.category = (request.form.get("category") or "").strip() or None
+        tag.is_active = bool(request.form.get("is_active"))
+        if not tag.tag:
+            flash("Тег не может быть пустым")
+            return redirect(url_for("templates_view"))
+        try:
+            session.commit()
+        except Exception as exc:
+            session.rollback()
+            flash(f"Не удалось обновить тег: {exc}")
+            return redirect(url_for("templates_view"))
+        flash("Тег обновлён")
+    finally:
+        session.close()
+    return redirect(url_for("templates_view"))
 
 
 @app.route("/queue")

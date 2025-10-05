@@ -1,0 +1,122 @@
+{% extends "layout.html" %}
+{% block content %}
+<h1>Ссылки и UTM-наборы</h1>
+<p>Активные ссылки доступны в шаблонах через объект <code>links</code> (например, <code>{{ '{{ links.tg }}' }}</code>). Используйте переключатель, чтобы скрыть ненужные каналы.</p>
+<section class="card">
+  <h2>Новая ссылка</h2>
+  <form method="post" action="{{ url_for('links_create') }}" class="stack-form">
+    <div class="form-row">
+      <label>Название</label>
+      <input name="name" required>
+    </div>
+    <div class="form-row">
+      <label>Slug</label>
+      <input name="slug" required placeholder="tg, vk, site">
+    </div>
+    <div class="form-row">
+      <label>URL</label>
+      <input name="url" required placeholder="https://example.com">
+    </div>
+    <div class="form-row">
+      <label>Платформа</label>
+      <input name="platform" placeholder="Telegram">
+    </div>
+    <div class="form-row">
+      <label>Описание</label>
+      <input name="description" placeholder="подпись">
+    </div>
+    <div class="form-row">
+      <label>UTM-параметры (JSON)</label>
+      <textarea name="utm_params" rows="2" placeholder='{"utm_source": "tg"}'></textarea>
+    </div>
+    <div class="form-row">
+      <label>Доп. данные (JSON)</label>
+      <textarea name="metadata" rows="2"></textarea>
+    </div>
+    <div class="form-row form-row-inline">
+      <label><input type="checkbox" name="is_active" checked> Активна</label>
+      <button type="submit">Добавить ссылку</button>
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Все ссылки</h2>
+  {% if links %}
+  <table class="queue-table">
+    <thead>
+      <tr>
+        <th>Название</th>
+        <th>Slug</th>
+        <th>URL</th>
+        <th>Платформа</th>
+        <th>UTM</th>
+        <th>Статус</th>
+        <th>Действия</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for link in links %}
+      <tr class="{% if not link.is_active %}is-inactive{% endif %}">
+        <td>{{ link.name }}</td>
+        <td>{{ link.slug }}</td>
+        <td><small>{{ link.url }}</small></td>
+        <td>{{ link.platform or '—' }}</td>
+        <td><small>{{ link.utm_params | tojson(indent=2) if link.utm_params else '—' }}</small></td>
+        <td>{{ 'Активна' if link.is_active else 'Выключена' }}</td>
+        <td>
+          <form method="post" action="{{ url_for('links_update', link_id=link.id) }}" class="stack-inline">
+            <button type="submit" name="action" value="toggle" class="button-secondary">{% if link.is_active %}Выключить{% else %}Включить{% endif %}</button>
+            <button type="submit" name="action" value="delete" class="danger">Удалить</button>
+          </form>
+        </td>
+      </tr>
+      <tr>
+        <td colspan="7">
+          <details>
+            <summary>Редактировать</summary>
+            <form method="post" action="{{ url_for('links_update', link_id=link.id) }}" class="stack-form">
+              <div class="form-row">
+                <label>Название</label>
+                <input name="name" value="{{ link.name }}" required>
+              </div>
+              <div class="form-row">
+                <label>Slug</label>
+                <input name="slug" value="{{ link.slug }}" required>
+              </div>
+              <div class="form-row">
+                <label>URL</label>
+                <input name="url" value="{{ link.url }}" required>
+              </div>
+              <div class="form-row">
+                <label>Платформа</label>
+                <input name="platform" value="{{ link.platform or '' }}">
+              </div>
+              <div class="form-row">
+                <label>Описание</label>
+                <input name="description" value="{{ link.description or '' }}">
+              </div>
+              <div class="form-row">
+                <label>UTM-параметры (JSON)</label>
+                <textarea name="utm_params" rows="2">{{ link.utm_params | tojson(indent=2) if link.utm_params else '' }}</textarea>
+              </div>
+              <div class="form-row">
+                <label>Доп. данные (JSON)</label>
+                <textarea name="metadata" rows="2">{{ link.metadata | tojson(indent=2) if link.metadata else '' }}</textarea>
+              </div>
+              <div class="form-row form-row-inline">
+                <label><input type="checkbox" name="is_active" value="1" {% if link.is_active %}checked{% endif %}> Активна</label>
+                <button type="submit">Сохранить</button>
+              </div>
+            </form>
+          </details>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p>Ссылок пока нет.</p>
+  {% endif %}
+</section>
+{% endblock %}

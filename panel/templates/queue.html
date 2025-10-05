@@ -1,0 +1,14 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Queue</title></head>
+<body>
+<h2>Очередь</h2>
+<ol>
+{% for i in queue %}
+<li>
+  {{ i.title }} — {{ i.publishAt or "public now" }} <br>
+  <small>{{ i.video_path }}</small>
+</li>
+{% endfor %}
+</ol>
+<a href="/">Назад</a>
+</body></html>

@@ -1,0 +1,119 @@
+{% extends "layout.html" %}
+{% block content %}
+<h1>Настройки аккаунтов</h1>
+<section class="card">
+  <h2>Создать аккаунт</h2>
+  <form method="post" action="{{ url_for('create_account') }}" class="grid-form">
+    <label>Название
+      <input name="name" required>
+    </label>
+    <label>Таймзона (IANA)
+      <input name="timezone" value="UTC" placeholder="Europe/Moscow">
+    </label>
+    <label>Дневной лимит
+      <input type="number" name="daily_cap" min="0" value="0">
+    </label>
+    <label>Тихие часы с
+      <input type="time" name="quiet_start">
+    </label>
+    <label>Тихие часы до
+      <input type="time" name="quiet_end">
+    </label>
+    <label>Тематика
+      <input name="theme">
+    </label>
+    <div class="form-actions">
+      <button type="submit">Создать</button>
+    </div>
+  </form>
+</section>
+
+{% for account in accounts %}
+<section class="card">
+  <header class="card-header">
+    <h2>{{ account.name }}</h2>
+    <span class="meta">{{ account.timezone }}</span>
+  </header>
+  <div class="card-body">
+    <form method="post" action="{{ url_for('update_account', account_id=account.id) }}" class="grid-form">
+      <label>Таймзона
+        <input name="timezone" value="{{ account.timezone }}">
+      </label>
+      <label>Дневной лимит
+        <input type="number" name="daily_cap" min="0" value="{{ account.daily_cap }}">
+      </label>
+      <label>Тихие часы с
+        <input type="time" name="quiet_start" value="{{ account.quiet_hours_start.strftime('%H:%M') if account.quiet_hours_start }}">
+      </label>
+      <label>Тихие часы до
+        <input type="time" name="quiet_end" value="{{ account.quiet_hours_end.strftime('%H:%M') if account.quiet_hours_end }}">
+      </label>
+      <label>Тематика
+        <input name="theme" value="{{ account.theme or '' }}">
+      </label>
+      <div class="form-actions">
+        <button type="submit">Сохранить</button>
+      </div>
+    </form>
+  </div>
+  <div class="card-body">
+    <h3>Каналы</h3>
+    {% if account.channels %}
+    <ul class="channel-list">
+      {% for channel in account.channels %}
+      <li>
+        <form method="post" action="{{ url_for('update_channel', channel_id=channel.id) }}" class="grid-form">
+          <h4>{{ channel.name }}</h4>
+          <label>Таймзона
+            <input name="timezone" value="{{ channel.timezone }}">
+          </label>
+          <label>Дневной лимит
+            <input type="number" name="daily_cap" min="0" value="{{ channel.daily_cap }}">
+          </label>
+          <label>Тихие часы с
+            <input type="time" name="quiet_start" value="{{ channel.quiet_hours_start.strftime('%H:%M') if channel.quiet_hours_start }}">
+          </label>
+          <label>Тихие часы до
+            <input type="time" name="quiet_end" value="{{ channel.quiet_hours_end.strftime('%H:%M') if channel.quiet_hours_end }}">
+          </label>
+          <label>Тематика
+            <input name="theme" value="{{ channel.theme or '' }}">
+          </label>
+          <div class="form-actions">
+            <button type="submit">Обновить канал</button>
+          </div>
+        </form>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p>Нет каналов.</p>
+    {% endif %}
+    <h4>Добавить канал</h4>
+    <form method="post" action="{{ url_for('create_channel', account_id=account.id) }}" class="grid-form">
+      <label>Название
+        <input name="name" required>
+      </label>
+      <label>Таймзона
+        <input name="timezone" value="{{ account.timezone }}">
+      </label>
+      <label>Дневной лимит
+        <input type="number" name="daily_cap" min="0" value="{{ account.daily_cap }}">
+      </label>
+      <label>Тихие часы с
+        <input type="time" name="quiet_start" value="{{ account.quiet_hours_start.strftime('%H:%M') if account.quiet_hours_start }}">
+      </label>
+      <label>Тихие часы до
+        <input type="time" name="quiet_end" value="{{ account.quiet_hours_end.strftime('%H:%M') if account.quiet_hours_end }}">
+      </label>
+      <label>Тематика
+        <input name="theme" value="{{ account.theme or '' }}">
+      </label>
+      <div class="form-actions">
+        <button type="submit">Добавить канал</button>
+      </div>
+    </form>
+  </div>
+</section>
+{% endfor %}
+{% endblock %}

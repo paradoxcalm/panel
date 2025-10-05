@@ -1,14 +1,40 @@
-<!doctype html>
-<html><head><meta charset="utf-8"><title>Queue</title></head>
-<body>
-<h2>Очередь</h2>
-<ol>
-{% for i in queue %}
-<li>
-  {{ i.title }} — {{ i.publishAt or "public now" }} <br>
-  <small>{{ i.video_path }}</small>
-</li>
-{% endfor %}
-</ol>
-<a href="/">Назад</a>
-</body></html>
+{% extends "layout.html" %}
+{% block content %}
+<h1>Очередь загрузок</h1>
+{% if not account %}
+  <p>Создайте аккаунт, чтобы просматривать очередь.</p>
+{% else %}
+  {% if queue %}
+  <table class="queue-table">
+    <thead>
+      <tr>
+        <th>Название</th>
+        <th>Канал</th>
+        <th>Публикация</th>
+        <th>Статус</th>
+        <th>Видео</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in queue %}
+      <tr>
+        <td>{{ item.title }}</td>
+        <td>{{ item.channel.name }}</td>
+        <td>
+          {% if item.publish_at %}
+            {{ (item.publish_at|in_tz(item.channel.timezone)).strftime('%Y-%m-%d %H:%M') }}
+          {% else %}
+            Немедленно
+          {% endif %}
+        </td>
+        <td>{{ item.status }}</td>
+        <td><small>{{ item.video_path }}</small></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>Очередь пуста.</p>
+  {% endif %}
+{% endif %}
+{% endblock %}

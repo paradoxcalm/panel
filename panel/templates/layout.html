@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>YT Panel</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar">
+    <h2>Аккаунты</h2>
+    <ul class="account-list">
+      {% for acc in nav_accounts %}
+      <li class="account-item{% if acc.id == active_account_id %} is-active{% endif %}">
+        <form method="post" action="{{ url_for('switch_account', account_id=acc.id) }}">
+          <button type="submit">{{ acc.name }}</button>
+        </form>
+        <small>{{ acc.timezone }}</small>
+      </li>
+      {% else %}
+      <li class="account-empty">Нет аккаунтов</li>
+      {% endfor %}
+    </ul>
+    <nav class="sidebar-nav">
+      <a href="{{ url_for('index') }}">Загрузка</a>
+      <a href="{{ url_for('queue_view') }}">Очередь</a>
+      <a href="{{ url_for('accounts_view') }}">Настройки аккаунтов</a>
+    </nav>
+  </aside>
+  <main class="content">
+    {% with messages = get_flashed_messages() %}
+      {% if messages %}
+      <div class="flash-messages">
+        {% for message in messages %}
+        <div class="flash">{{ message }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+</div>
+</body>
+</html>

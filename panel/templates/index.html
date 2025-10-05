@@ -1,31 +1,101 @@
-<!doctype html>
-<html><head>
-<meta charset="utf-8"><title>YT Panel</title>
-<link rel="stylesheet" href="/static/style.css">
-</head><body>
-<h2>Загрузить в очередь</h2>
-<form action="/upload" method="post" enctype="multipart/form-data">
-  <label>Видео: <input type="file" name="video" required></label><br>
-  <label>Миниатюра: <input type="file" name="thumb"></label><br>
-  <label>Title: <input name="title" placeholder="по умолчанию = имя файла"></label><br>
-  <label>Description:<br><textarea name="description" rows="4"></textarea></label><br>
-  <label>Telegram ссылка: <input name="tg" placeholder="https://t.me/your_channel"></label><br>
-  <label>Tags (через запятую): <input name="tags" value="youtube,shorts"></label><br>
-  <label>CategoryId: <input name="categoryId" value="22"></label><br>
-  <fieldset>
-    <legend>Публикация</legend>
-    <label><input type="radio" name="mode" value="now" checked> Сразу (public)</label>
-    <label><input type="radio" name="mode" value="schedule"> Запланировать</label>
-    <input type="date" name="date"> <input type="time" name="time">
-    <label><input type="radio" name="mode" value="random"> Рандом 1–3 часа</label>
-    Мин: <input type="number" step="0.1" name="min_h" value="1"> Макс: <input type="number" step="0.1" name="max_h" value="3">
-  </fieldset>
-  <button type="submit">Добавить</button>
-</form>
+{% extends "layout.html" %}
+{% block content %}
+<h1>Загрузка видео</h1>
+{% if not account %}
+  <p>Добавьте аккаунт и канал в разделе «Настройки аккаунтов», чтобы начать загрузку.</p>
+{% else %}
+  {% if not channels %}
+    <p>Для активного аккаунта нет каналов. Создайте канал на вкладке «Настройки аккаунтов».</p>
+  {% else %}
+  <form action="{{ url_for('upload') }}" method="post" enctype="multipart/form-data" class="card">
+    <div class="form-row">
+      <label for="channel_id">Канал</label>
+      <select name="channel_id" id="channel_id" required>
+        <option value="" disabled selected>Выберите канал</option>
+        {% for channel in channels %}
+        <option value="{{ channel.id }}">{{ channel.name }} ({{ channel.timezone }})</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-row">
+      <label>Видео</label>
+      <input type="file" name="video" required>
+    </div>
+    <div class="form-row">
+      <label>Миниатюра</label>
+      <input type="file" name="thumb">
+    </div>
+    <div class="form-row">
+      <label>Title</label>
+      <input name="title" placeholder="по умолчанию = имя файла">
+    </div>
+    <div class="form-row">
+      <label>Description</label>
+      <textarea name="description" rows="4"></textarea>
+    </div>
+    <div class="form-row">
+      <label>Telegram ссылка</label>
+      <input name="tg" placeholder="https://t.me/your_channel">
+    </div>
+    <div class="form-row">
+      <label>Tags (через запятую)</label>
+      <input name="tags" value="youtube,shorts">
+    </div>
+    <div class="form-row">
+      <label>CategoryId</label>
+      <input name="categoryId" value="22">
+    </div>
+    <fieldset class="form-row">
+      <legend>Публикация</legend>
+      <label><input type="radio" name="mode" value="now" checked> Сразу (public)</label>
+      <label><input type="radio" name="mode" value="schedule"> Запланировать</label>
+      <input type="date" name="date">
+      <input type="time" name="time">
+      <label><input type="radio" name="mode" value="random"> Рандом</label>
+      Мин: <input type="number" step="0.1" name="min_h" value="1">
+      Макс: <input type="number" step="0.1" name="max_h" value="3">
+    </fieldset>
+    <div class="form-actions">
+      <button type="submit">Добавить в очередь</button>
+    </div>
+  </form>
+  {% endif %}
+{% endif %}
 
-<h2>Очередь</h2>
-<a href="/queue">Открыть</a>
-<form action="/start" method="post" style="display:inline">
-  <button>Старт загрузки (всё из очереди)</button>
-</form>
-</body></html>
+<section class="card">
+  <h2>Очередь активного аккаунта</h2>
+  {% if queue %}
+  <table class="queue-table">
+    <thead>
+      <tr>
+        <th>Название</th>
+        <th>Канал</th>
+        <th>Публикация</th>
+        <th>Статус</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in queue %}
+      <tr>
+        <td>{{ item.title }}</td>
+        <td>{{ item.channel.name }}</td>
+        <td>
+          {% if item.publish_at %}
+            {{ (item.publish_at|in_tz(item.channel.timezone)).strftime('%Y-%m-%d %H:%M') }}
+          {% else %}
+            Немедленно
+          {% endif %}
+        </td>
+        <td>{{ item.status }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>Очередь пуста.</p>
+  {% endif %}
+  <form action="{{ url_for('start') }}" method="post">
+    <button type="submit">Старт загрузки (всё из очереди)</button>
+  </form>
+</section>
+{% endblock %}
